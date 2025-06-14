@@ -1,0 +1,50 @@
+# ---> Erlang
+.rebar3
+_build
+_checkouts
+_vendor
+.eunit
+*.o
+*.beam
+*.plt
+*.swp
+*.swo
+.erlang.cookie
+ebin
+log
+erl_crash.dump
+.concrete/DEV_MODE
+logs
+.idea
+*.iml
+rebar3.crashdump
+*~
+
+# rebar 2.x
+.rebar
+rel/example_project
+ebin/*.beam
+deps
+
+# rebar 3
+.rebar3
+_build/
+_checkouts/
+
+# ---> Elixir
+/_build
+/cover
+/deps
+/doc
+/.fetch
+erl_crash.dump
+*.ez
+*.beam
+/config/*.secret.exs
+.elixir_ls/
+
+# -> lock file (tmp)
+*.lock
+
+Mnesia.nonode@nohost/
+mnesia_test_data/
