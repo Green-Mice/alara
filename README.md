@@ -2,6 +2,10 @@
 
 **ALARA** is a distributed entropy network system implemented in Erlang. It enables you to create a network of nodes, inject entropy, and manage distributed randomness across multiple participants in a decentralized manner.
 
+[![Hex.pm](https://img.shields.io/hexpm/v/alara.svg)](https://hex.pm/packages/alara)
+[![Hex Docs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/alara)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
 ## Features
 
 - **Distributed Network Management**: Create and manage distributed entropy networks with multiple nodes
