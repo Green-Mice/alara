@@ -1,0 +1,23 @@
+{application, alara,
+ [
+  {description, "ALARA - Distributed Entropy Network System"},
+  {vsn, "1.0.0"},
+  {registered, []},
+  {applications, [
+    kernel,
+    stdlib,
+    crypto,
+    ranch,
+    jsx
+  ]},
+  {env, [
+    {default_trust_level, 0.8},
+    {consensus_interval, 5000},
+    {max_nodes, 1000},
+    {entropy_pool_size, 10000}
+  ]},
+  {modules, [alara]},
+  {licenses, ["MIT"]},
+  {links, [{"GitHub", "https://github.com/roquess/alara"}]}
+ ]}.
+
