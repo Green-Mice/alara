@@ -88,15 +88,12 @@ get_consensus_status(NetworkPid) ->
 run_statistical_tests(NetworkPid) ->
     gen_server:call(NetworkPid, run_statistical_tests).
 
-%% Génère une liste de N booléens aléatoires (bits)
 generate_random_bools(N) when is_integer(N), N > 0 ->
     [rand:uniform(2) =:= 1 || _ <- lists:seq(1, N)].
 
-%% Récupère le pool global d'entropie du réseau
 get_entropy_pool(NetworkPid) ->
     gen_server:call(NetworkPid, get_entropy_pool).
 
-%% Fabrique un entier à partir des N premiers bits du pool d'entropie
 random_int(NetworkPid, NBits) when is_integer(NBits), NBits > 0 ->
     Bits = lists:sublist(?MODULE:get_entropy_pool(NetworkPid), NBits),
     lists:foldl(fun(B, Acc) -> (Acc bsl 1) bor (if B -> 1; true -> 0 end) end, 0, Bits).
