@@ -1,14 +1,13 @@
 {application, alara,
  [
   {description, "ALARA - Distributed Entropy Network System"},
-  {vsn, "0.1.3"},
+  {vsn, "0.1.4"},
   {registered, []},
   {applications, [
     kernel,
     stdlib,
     crypto,
-    ranch,
-    jsx
+    ranch
   ]},
   {env, [
     {default_trust_level, 0.8},
