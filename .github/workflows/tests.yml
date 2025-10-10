@@ -1,0 +1,21 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    container:
+      image: erlang:26
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install dependencies
+      run: rebar3 deps
+    - name: Run tests
+      run: rebar3 eunit
