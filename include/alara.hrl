@@ -10,12 +10,11 @@
 }).
 
 -record(node, {
-    node_id :: non_neg_integer(),
+    node_id :: pid(),
     sources :: [#entropy_source{}],
     neighbors :: [non_neg_integer()],
     trust_level :: float(),
-    is_active :: boolean(),
-    pid :: pid() | undefined
+    is_active :: boolean()
 }).
 
 -record(distributed_entropy_network, {
