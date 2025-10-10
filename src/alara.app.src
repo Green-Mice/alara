@@ -5,9 +5,7 @@
   {registered, []},
   {applications, [
     kernel,
-    stdlib,
-    crypto,
-    ranch
+    stdlib
   ]},
   {env, [
     {default_trust_level, 0.8},
