@@ -14,7 +14,7 @@
     {entropy_pool_size, 10000}
   ]},
   {modules, [alara]},
-  {licenses, ["Apache 2.0"]},
+  {licenses, ["Apache-2.0"]},
   {links, [{"GitHub", "https://github.com/Green-Mice/alara"}]}
  ]}.
 
