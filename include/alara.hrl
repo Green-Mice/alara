@@ -1,34 +1,13 @@
 -ifndef(ALARA_HRL).
 -define(ALARA_HRL, true).
 
--record(entropy_source, {
-    source_id :: non_neg_integer(),
-    entropy_data :: [boolean()],
-    quality_metric :: float(),
-    timestamp :: non_neg_integer(),
-    physical_signature :: [float()]
-}).
-
 -record(node, {
-    node_id :: pid(),
-    sources :: [#entropy_source{}],
-    neighbors :: [non_neg_integer()],
-    trust_level :: float(),
-    is_active :: boolean()
-}).
-
--record(distributed_entropy_network, {
-    nodes :: [#node{}],
-    topology :: [{non_neg_integer(), non_neg_integer()}],
-    global_entropy_pool :: [boolean()],
-    consensus_round :: non_neg_integer(),
-    network_quality :: float()
+    node_id :: pid()
 }).
 
 -record(state, {
-    network :: #distributed_entropy_network{},
-    node_processes :: #{non_neg_integer() => pid()},
-    consensus_timer :: reference() | undefined
+    nodes :: [pid()],
+    node_supervisor :: pid()
 }).
 
 -endif.

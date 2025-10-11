@@ -1,6 +1,7 @@
-# ALARA - Distributed Entropy Network System
+# ALARA - Distributed Entropy System
 
-**ALARA** is a distributed entropy network system implemented in Erlang. It enables you to create a network of nodes, inject entropy, and manage distributed randomness across multiple participants in a decentralized manner.
+**ALARA** is a lightweight distributed entropy system written in Erlang.  
+It spawns multiple supervised nodes capable of generating random bits and integers in a distributed fashion.
 
 [![Hex.pm](https://img.shields.io/hexpm/v/alara.svg)](https://hex.pm/packages/alara)
 [![Hex Docs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/alara)
@@ -8,15 +9,14 @@
 
 ## Features
 
-- **Distributed Network Management**: Create and manage distributed entropy networks with multiple nodes
-- **Node Trust System**: Add and remove nodes with configurable trust levels
-- **Entropy Injection & Propagation**: Inject entropy from any node and propagate it across the network
-- **Network Quality Monitoring**: Query network quality metrics and consensus status
-- **Decentralized Randomness**: Generate and maintain a global entropy pool from distributed sources
+- **Distributed Randomness**: Generate random booleans and integers across multiple Erlang nodes  
+- **Node Supervision**: Automatic node management via Erlang supervisors  
+- **Scalable Network Creation**: Easily create networks with configurable node counts  
+- **Simple API**: Small, clean, and efficient interface for distributed randomness
 
 ## Requirements
 
-- Erlang/OTP 25+ 
+- Erlang/OTP 25+
 - Rebar3
 
 ## Quick Start
@@ -24,7 +24,7 @@
 ### 1. Clone and Build
 
 ```bash
-git clone https://github.com/roquess/alara.git
+git clone https://github.com/Green-Mice/alara.git
 cd alara
 rebar3 compile
 ```
@@ -38,73 +38,46 @@ rebar3 shell
 ### 3. Basic Usage Example
 
 ```erlang
-% Create a new distributed entropy network
+%% Create a network with 3 nodes
 {ok, NetPid} = alara:create_network().
 
-% Create a node with ID 1, trust level 0.9, and mark it as active
-{ok, Node} = alara:create_node(1, 0.9, true).
+%% Or create a network with N nodes
+{ok, NetPid} = alara:create_network(5).
 
-% Add the node to the network
-{ok, node_added} = alara:add_node(NetPid, Node).
+%% Retrieve all node PIDs
+{ok, Nodes} = alara:get_nodes(NetPid),
+io:format("Nodes: ~p~n", [Nodes]).
 
-% Generate 32 random bits
-Bits = [rand:uniform(2) =:= 1 || _ <- lists:seq(1, 32)].
+%% Generate 16 distributed random booleans
+Bits = alara:generate_random_bools(16),
+io:format("Bits: ~p~n", [Bits]).
 
-% Inject entropy into the network from node 1
-ok = alara:generate_entropy(NetPid, {1, Bits}).
-
-% (Optional) Wait a moment for the entropy to be processed
-timer:sleep(100).
-
-% Retrieve the global entropy pool
-{ok, Network} = gen_server:call(NetPid, get_network_state),
-Pool = Network#distributed_entropy_network.global_entropy_pool.
-
-% Check that your bits are in the pool
-io:format("First 32 bits in pool: ~p~n", [lists:sublist(Pool, 32)]).
+%% Generate a random integer from 32 bits of distributed randomness
+RandInt = alara:generate_random_int(32),
+io:format("Random Int: ~p~n", [RandInt]).
 ```
 
 ## API Reference
 
 ### Network Management
+- `alara:create_network/0` – Create a network with 3 nodes  
+- `alara:create_network/1` – Create a network with a given number of nodes  
+- `alara:get_network_state/1` – Get the internal network state (node supervisor, node list)  
+- `alara:get_nodes/1` – Get the list of node PIDs in the network  
 
-- `alara:create_network/0` - Create a new distributed entropy network
-- `alara:add_node/2` - Add a node to the network
-- `alara:remove_node/2` - Remove a node from the network
-
-### Node Operations
-
-- `alara:create_node/3` - Create a new node with ID, trust level, and active status
-- `alara:generate_entropy/2` - Inject entropy from a specific node
-
-### Network Monitoring
-
-- `gen_server:call(NetPid, get_network_state)` - Get current network state
-- Query network quality and consensus metrics
+### Random Generation
+- `alara:generate_random_bools/1` – Generate N random booleans distributed across all nodes  
+- `alara:generate_random_bools/2` – Generate N random booleans from a specific node  
+- `alara:generate_random_int/1` – Generate a random integer from N distributed bits  
 
 ## Architecture
 
-ALARA uses a distributed architecture where:
+ALARA uses a simple distributed design:
+- **`alara_node_sup`** supervises all random node processes.  
+- **`alara_node`** represents a random entropy source.  
+- **`alara`** coordinates network creation, node access, and random generation requests.
 
-- **Nodes** represent entropy sources with configurable trust levels
-- **Networks** manage collections of nodes and maintain global entropy pools
-- **Entropy** is propagated across the network using Erlang's distributed capabilities
-- **Trust levels** influence how entropy from different nodes is weighted
-
-## Use Cases
-
-- Distributed random number generation
-- Cryptographic key material generation
-- Consensus randomness for blockchain applications
-- Multi-party computation requiring shared randomness
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Submit a pull request
+All randomness is generated using Erlang’s `rand` module, distributed across worker nodes managed by a supervisor.
 
 ## License
 
@@ -112,4 +85,5 @@ Apache 2.0
 
 ---
 
-*ALARA provides a robust foundation for distributed entropy management in Erlang applications requiring decentralized randomness.*
+*ALARA provides a minimal yet powerful framework for distributed randomness generation in Erlang.*
+

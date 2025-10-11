@@ -12,9 +12,6 @@
     start_link/1,
     create_network/0,
     create_network/1,
-    add_connection/3,
-    remove_connection/3,
-    get_network_quality/1,
     get_network_state/1,
     get_nodes/1,
     generate_random_bools/1,
@@ -33,24 +30,13 @@
 %% Create a network with 3 nodes
 create_network() ->
     gen_server:start_link(?MODULE, [3], []).
+
 %% Create a network with N nodes
 create_network(NumNodes) ->
     gen_server:start_link(?MODULE, [NumNodes], []).
 
 start_link(NumNodes) ->
     gen_server:start_link(?MODULE, [NumNodes], []).
-
-%% Add a connection between two nodes
-add_connection(NetworkPid, NodePid1, NodePid2) ->
-    gen_server:call(NetworkPid, {add_connection, NodePid1, NodePid2}).
-
-%% Remove a connection between two nodes
-remove_connection(NetworkPid, NodePid1, NodePid2) ->
-    gen_server:call(NetworkPid, {remove_connection, NodePid1, NodePid2}).
-
-%% Get the network quality metric
-get_network_quality(NetworkPid) ->
-    gen_server:call(NetworkPid, get_network_quality).
 
 %% Get the current network state
 get_network_state(NetworkPid) ->
@@ -83,76 +69,24 @@ init([NumNodes]) when is_integer(NumNodes), NumNodes > 0 ->
         {ok, Pid} -> Pid;
         {error, {already_started, Pid}} -> Pid
     end,
-    
+
     %% Get the node PIDs that were just started
     NodePids = alara_node_sup:get_nodes(),
 
     State = #state{
-        network = #distributed_entropy_network{
-            nodes = NodePids,
-            topology = [],
-            global_entropy_pool = [],
-            consensus_round = 0,
-            network_quality = 0.0
-        },
-        node_processes = SupPid,
-        consensus_timer = undefined
+        nodes = NodePids,
+        node_supervisor = SupPid
     },
     {ok, State}.
 
-handle_call({add_connection, NodePid1, NodePid2}, _From, State) ->
-    #state{network = Network} = State,
-    Nodes = Network#distributed_entropy_network.nodes,
-    case lists:member(NodePid1, Nodes) andalso lists:member(NodePid2, Nodes) of
-        true ->
-            NewTopology = [{NodePid1, NodePid2}, {NodePid2, NodePid1} |
-                         Network#distributed_entropy_network.topology],
-            UpdatedNetwork = Network#distributed_entropy_network{
-                topology = lists:usort(NewTopology)
-            },
-            NewState = State#state{network = UpdatedNetwork},
-            {reply, {ok, nodes_connected}, NewState};
-        false ->
-            {reply, {error, node_not_found}, State}
-    end;
-
-handle_call({remove_connection, NodePid1, NodePid2}, _From, State) ->
-    #state{network = Network} = State,
-    UpdatedTopology = lists:filter(
-        fun({N1, N2}) -> 
-            not ((N1 =:= NodePid1 andalso N2 =:= NodePid2) orelse
-                 (N1 =:= NodePid2 andalso N2 =:= NodePid1))
-        end,
-        Network#distributed_entropy_network.topology
-    ),
-    UpdatedNetwork = Network#distributed_entropy_network{
-        topology = UpdatedTopology
-    },
-    NewState = State#state{network = UpdatedNetwork},
-    {reply, {ok, connection_removed}, NewState};
-
-handle_call(get_network_quality, _From, State) ->
-    #state{network = Network} = State,
-    %% Calculate quality based on number of active nodes and connections
-    NumNodes = length(Network#distributed_entropy_network.nodes),
-    NumConnections = length(Network#distributed_entropy_network.topology) div 2,
-    Quality = case NumNodes of
-        0 -> 0.0;
-        1 -> 0.0;
-        N -> NumConnections / (N * (N - 1) / 2)
-    end,
-    UpdatedNetwork = Network#distributed_entropy_network{
-        network_quality = Quality
-    },
-    NewState = State#state{network = UpdatedNetwork},
-    {reply, {ok, Quality}, NewState};
-
 handle_call(get_network_state, _From, State) ->
-    {reply, {ok, State#state.network}, State};
+    {reply, {ok, State}, State};
 
 handle_call(get_nodes, _From, State) ->
-    Nodes = State#state.network#distributed_entropy_network.nodes,
-    {reply, {ok, Nodes}, State}.
+    {reply, {ok, State#state.nodes}, State};
+
+handle_call(_Request, _From, State) ->
+    {reply, {error, unknown_request}, State}.
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -170,6 +104,3 @@ terminate(_Reason, _State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-%% ============================================================================
-%% INTERNAL FUNCTIONS
-%% ============================================================================
