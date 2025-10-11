@@ -47,7 +47,7 @@ generate_random_bools(N) when is_integer(N), N > 0 ->
             end
     end.
 
-%% Generate a random integer using NBits from all nodes (distributed)
+%% Generate a random integer using NBits
 generate_random_int(NBits) when is_integer(NBits), NBits > 0 ->
     case generate_random_bools(NBits) of
         {error, Reason} -> {error, Reason};
@@ -83,12 +83,6 @@ init(NumNodes) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-
-start_initial_nodes(0) ->
-    ok;
-start_initial_nodes(N) when N > 0 ->
-    {ok, _Pid} = start_node(),
-    start_initial_nodes(N - 1).
 
 bits_to_integer(Bits) ->
     lists:foldl(

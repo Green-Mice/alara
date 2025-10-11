@@ -79,7 +79,10 @@ generate_random_int(NBits) when is_integer(NBits), NBits > 0 ->
 init([NumNodes]) when is_integer(NumNodes), NumNodes > 0 ->
     process_flag(trap_exit, true),
     %% Start the node supervisor - it automatically starts all nodes
-    {ok, SupPid} = alara_node_sup:start_link(NumNodes),
+    SupPid = case alara_node_sup:start_link(NumNodes) of
+        {ok, Pid} -> Pid;
+        {error, {already_started, Pid}} -> Pid
+    end,
     
     %% Get the node PIDs that were just started
     NodePids = alara_node_sup:get_nodes(),
@@ -135,6 +138,7 @@ handle_call(get_network_quality, _From, State) ->
     NumConnections = length(Network#distributed_entropy_network.topology) div 2,
     Quality = case NumNodes of
         0 -> 0.0;
+        1 -> 0.0;
         N -> NumConnections / (N * (N - 1) / 2)
     end,
     UpdatedNetwork = Network#distributed_entropy_network{
