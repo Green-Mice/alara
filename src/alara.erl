@@ -71,7 +71,7 @@
 create_network() ->
     create_network(?DEFAULT_NODES).
 
-%% @doc Start a network with `NumNodes` entropy worker nodes.
+%% @doc Start a network with NumNodes entropy worker nodes.
 %%
 %% More nodes increase resilience to single-node failure and make the
 %% combined entropy harder to predict, at the cost of slightly more
@@ -95,25 +95,25 @@ get_nodes(NetworkPid) ->
 %% the call path does not add a redundant gen_server hop.
 %% ---------------------------------------------------------------------------
 
-%% @doc Generate `N` cryptographically secure random bytes.
+%% @doc Generate N cryptographically secure random bytes.
 %%
 %% Entropy is collected from all workers in parallel and mixed with
-%% SHA3-256 before being returned.  See `alara_node_sup` for the full
+%% SHA3-256 before being returned.  See alara_node_sup for the full
 %% mixing strategy.
 -spec generate_random_bytes(N :: pos_integer()) ->
     binary() | {error, no_nodes}.
 generate_random_bytes(N) when is_integer(N), N > 0 ->
     alara_node_sup:generate_random_bytes(N).
 
-%% @doc Generate `N` random bits as a list of `0 | 1` integers.
+%% @doc Generate N random bits as a list of 0 | 1 integers.
 -spec generate_random_bits(N :: pos_integer()) ->
     [0 | 1] | {error, no_nodes}.
 generate_random_bits(N) when is_integer(N), N > 0 ->
     alara_node_sup:generate_random_bits(N).
 
-%% @doc Generate a non-negative random integer using `NBits` of entropy.
+%% @doc Generate a non-negative random integer using NBits of entropy.
 %%
-%% The result is in the range `[0, 2^NBits - 1]`.
+%% The result is in the range [0, 2^NBits - 1].
 -spec generate_random_int(NBits :: pos_integer()) ->
     non_neg_integer() | {error, no_nodes}.
 generate_random_int(NBits) when is_integer(NBits), NBits > 0 ->
