@@ -44,7 +44,7 @@ unpredictable even if all but one worker is compromised.
 
 ```erlang
 %% rebar.config
-{deps, [{alara, "0.2.0"}]}.
+{deps, [{alara, "0.1.6"}]}.
 ```
 
 ### 2. Build
