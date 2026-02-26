@@ -1,27 +1,53 @@
-# ALARA - Distributed Entropy System
+# ALARA — Distributed Entropy Network System
 
-**ALARA** is a lightweight distributed entropy system written in Erlang.  
-It spawns multiple supervised nodes capable of generating random bits and integers in a distributed fashion.
+**ALARA** is a lightweight distributed entropy system written in Erlang/OTP.  
+It supervises a pool of worker nodes, each producing cryptographically secure
+random bytes via `crypto:strong_rand_bytes/1`. Contributions from all workers
+are mixed with **SHA3-256** before being returned, so the output remains
+unpredictable even if all but one worker is compromised.
 
 [![Hex.pm](https://img.shields.io/hexpm/v/alara.svg)](https://hex.pm/packages/alara)
 [![Hex Docs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/alara)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
+---
+
 ## Features
 
-- **Distributed Randomness**: Generate random booleans and integers across multiple Erlang nodes  
-- **Node Supervision**: Automatic node management via Erlang supervisors  
-- **Scalable Network Creation**: Easily create networks with configurable node counts  
-- **Simple API**: Small, clean, and efficient interface for distributed randomness
+- **Cryptographically secure** — built exclusively on `crypto:strong_rand_bytes/1` (OTP `crypto` application), never on `rand`
+- **Distributed mixing** — entropy from every worker is combined and hashed with SHA3-256 before use
+- **OTP-supervised pool** — workers restart automatically on failure; the node list is always read live from the supervisor
+- **Parallel collection** — worker requests are issued concurrently to minimise latency
+- **Clean, minimal API** — bytes, bits, or integers; one call each
+
+---
 
 ## Requirements
 
 - Erlang/OTP 25+
 - Rebar3
 
+> **Security note — distributed Erlang**  
+> When running ALARA across multiple machines or VMs, secure the Erlang
+> distribution channel with TLS (`-proto_dist inet_tls`) and use a
+> high-entropy cookie. Without TLS, a network attacker can observe or
+> interfere with inter-node traffic.  
+> This library has not yet been formally audited by an independent
+> cryptographer. Treat it as experimental for high-security production
+> environments until such an audit is completed.
+
+---
+
 ## Quick Start
 
-### 1. Clone and Build
+### 1. Add to your project
+
+```erlang
+%% rebar.config
+{deps, [{alara, "0.2.0"}]}.
+```
+
+### 2. Build
 
 ```bash
 git clone https://github.com/Green-Mice/alara.git
@@ -29,61 +55,107 @@ cd alara
 rebar3 compile
 ```
 
-### 2. Run the Erlang Shell
+### 3. Run the shell
 
 ```bash
 rebar3 shell
 ```
 
-### 3. Basic Usage Example
+### 4. Basic usage
 
 ```erlang
-%% Create a network with 3 nodes
-{ok, NetPid} = alara:create_network().
-
-%% Or create a network with N nodes
+%% Start a pool of 5 entropy workers.
 {ok, NetPid} = alara:create_network(5).
 
-%% Retrieve all node PIDs
-{ok, Nodes} = alara:get_nodes(NetPid),
-io:format("Nodes: ~p~n", [Nodes]).
+%% Or use the default (3 workers).
+{ok, NetPid} = alara:create_network().
 
-%% Generate 16 distributed random booleans
-Bits = alara:generate_random_bools(16),
+%% List the live worker PIDs.
+{ok, Nodes} = alara:get_nodes(NetPid),
+io:format("Workers: ~p~n", [Nodes]).
+
+%% Generate 32 cryptographically secure random bytes.
+Bytes = alara:generate_random_bytes(32),
+io:format("Bytes: ~p~n", [Bytes]).
+
+%% Generate 64 random bits as a list of 0 | 1 integers.
+Bits = alara:generate_random_bits(64),
 io:format("Bits: ~p~n", [Bits]).
 
-%% Generate a random integer from 32 bits of distributed randomness
-RandInt = alara:generate_random_int(32),
-io:format("Random Int: ~p~n", [RandInt]).
+%% Generate a random non-negative integer using 128 bits of entropy.
+%% Result is in [0, 2^128 - 1].
+Int = alara:generate_random_int(128),
+io:format("Int: ~p~n", [Int]).
 ```
+
+---
 
 ## API Reference
 
-### Network Management
-- `alara:create_network/0` – Create a network with 3 nodes  
-- `alara:create_network/1` – Create a network with a given number of nodes  
-- `alara:get_network_state/1` – Get the internal network state (node supervisor, node list)  
-- `alara:get_nodes/1` – Get the list of node PIDs in the network  
+### Network management
 
-### Random Generation
-- `alara:generate_random_bools/1` – Generate N random booleans distributed across all nodes  
-- `alara:generate_random_bools/2` – Generate N random booleans from a specific node  
-- `alara:generate_random_int/1` – Generate a random integer from N distributed bits  
+| Function | Description |
+|---|---|
+| `alara:create_network/0` | Start a supervised pool with 3 entropy workers |
+| `alara:create_network/1` | Start a supervised pool with `N` entropy workers |
+| `alara:get_nodes/1` | Return the PIDs of all currently live workers |
+
+### Entropy generation
+
+All functions below are also available directly on `alara_node_sup` for a
+lighter call path (no extra `gen_server` hop).
+
+| Function | Returns | Description |
+|---|---|---|
+| `alara:generate_random_bytes/1` | `binary()` | `N` random bytes, SHA3-256 mixed |
+| `alara:generate_random_bits/1` | `[0\|1]` | `N` random bits |
+| `alara:generate_random_int/1` | `non_neg_integer()` | Random integer in `[0, 2^N - 1]` |
+
+### Direct worker access
+
+```erlang
+%% Start a standalone worker (no supervisor).
+{ok, Pid} = alara_node:start_link().
+
+%% Request raw bytes directly from one worker (no mixing step).
+Bytes = alara_node:get_random_bytes(Pid, 16).
+```
+
+---
 
 ## Architecture
 
-ALARA uses a simple distributed design:
-- **`alara_node_sup`** supervises all random node processes.  
-- **`alara_node`** represents a random entropy source.  
-- **`alara`** coordinates network creation, node access, and random generation requests.
+```
+alara  (gen_server — optional façade)
+  └── alara_node_sup  (supervisor, one_for_one)
+        ├── alara_node  (entropy worker — crypto:strong_rand_bytes)
+        ├── alara_node  (entropy worker — crypto:strong_rand_bytes)
+        └── ...
+```
 
-All randomness is generated using Erlang’s `rand` module, distributed across worker nodes managed by a supervisor.
+**`alara_node`** — each worker holds no mutable state. On every request it
+calls `crypto:strong_rand_bytes/1` and returns the result. There is nothing
+to compromise at rest.
+
+**`alara_node_sup`** — supervises the worker pool (`one_for_one`, permanent
+restart). Worker requests are issued in parallel; results are concatenated
+and hashed with SHA3-256. The node list is always fetched live from
+`supervisor:which_children/1` — never from a stale cache.
+
+**`alara`** — thin gen_server façade. Starts the supervisor and re-exports
+the generation functions. Generation calls delegate directly to
+`alara_node_sup`, adding no extra message hop.
+
+---
+
+## Running Tests
+
+```bash
+rebar3 eunit
+```
+
+---
 
 ## License
 
 Apache 2.0
-
----
-
-*ALARA provides a minimal yet powerful framework for distributed randomness generation in Erlang.*
-

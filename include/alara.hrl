@@ -1,13 +1,14 @@
--ifndef(ALARA_HRL).
--define(ALARA_HRL, true).
+%% ============================================================================
+%% alara.hrl - Shared record and type definitions for the ALARA ecosystem
+%% ============================================================================
 
--record(node, {
-    node_id :: pid()
-}).
-
+%% State of the top-level ALARA gen_server.
+%% - node_supervisor : PID of the alara_node_sup supervisor
 -record(state, {
-    nodes :: [pid()],
     node_supervisor :: pid()
 }).
 
--endif.
+%% Internal state of a single entropy node.
+%% Intentionally minimal: the node holds no mutable data,
+%% all randomness is produced on demand via crypto(3).
+-record(node_state, {}).

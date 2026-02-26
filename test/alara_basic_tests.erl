@@ -6,19 +6,17 @@
 %% Test Fixtures - Setup and Cleanup
 %% ============================================================================
 
-%% Setup function - ensures clean state before each test
+%% Kill any registered supervisor left over from a previous test run.
 setup() ->
-    %% Kill any existing supervisor that might be registered
     case whereis(alara_node_sup) of
-        undefined -> ok;
+        undefined ->
+            ok;
         Pid when is_pid(Pid) ->
             catch exit(Pid, kill),
-            %% Wait for the process to actually die
             timer:sleep(50)
     end,
     ok.
 
-%% Cleanup function - stops network and waits for cleanup
 cleanup(NetPid) when is_pid(NetPid) ->
     case is_process_alive(NetPid) of
         true ->
@@ -33,206 +31,175 @@ cleanup(_) ->
 %% ============================================================================
 %% Test: Basic Network Creation
 %% ============================================================================
-%% This test verifies that:
-%% - A network can be created with a specified number of nodes
-%% - The nodes are automatically started by the supervisor
-%% - Network state can be retrieved
+%% Verifies that:
+%% - A network starts with the requested number of worker nodes.
+%% - Every returned PID belongs to a live process.
 basic_scenario_test() ->
     setup(),
-    %% Create a network with 3 nodes (nodes are automatically created)
     {ok, NetPid} = alara:create_network(3),
 
-    %% Retrieve the list of nodes that were automatically started
     {ok, Nodes} = alara:get_nodes(NetPid),
-
-    %% Verify that we have exactly 3 nodes
     ?assertEqual(3, length(Nodes)),
-
-    %% Verify all node PIDs are valid processes
     ?assert(lists:all(fun(Pid) -> is_pid(Pid) andalso is_process_alive(Pid) end, Nodes)),
 
-    %% Verify we can retrieve the full network state
-    {ok, NetworkState} = alara:get_network_state(NetPid),
-    ?assert(is_record(NetworkState, state)),
-    
-    %% Verify the state contains our nodes
-    ?assertEqual(Nodes, NetworkState#state.nodes),
-
-    %% Clean up - stop the network process
     cleanup(NetPid).
 
 %% ============================================================================
 %% Test: Multiple Nodes Creation
 %% ============================================================================
-%% This test verifies that:
-%% - Multiple nodes can be created in a network
-%% - All nodes are running and accessible
+%% Verifies that all three workers in a 3-node network are individually alive.
 multiple_nodes_test() ->
     setup(),
-    %% Create a network with 3 nodes
     {ok, NetPid} = alara:create_network(3),
 
-    %% Retrieve the node PIDs
     {ok, [Node1, Node2, Node3]} = alara:get_nodes(NetPid),
-
-    %% Verify all nodes are running
     ?assert(is_process_alive(Node1)),
     ?assert(is_process_alive(Node2)),
     ?assert(is_process_alive(Node3)),
 
-    %% Verify the network state contains all nodes
-    {ok, NetworkState} = alara:get_network_state(NetPid),
-    ?assertEqual(3, length(NetworkState#state.nodes)),
-
-    %% Clean up
     cleanup(NetPid).
 
 %% ============================================================================
-%% Test: Random Number Generation from Distributed Nodes
+%% Test: Random Byte Generation
 %% ============================================================================
-%% This test verifies that:
-%% - Random booleans can be generated from the distributed node pool
-%% - Random integers can be generated using multiple bits
-%% - The generated values are valid and within expected ranges
+%% Verifies that:
+%% - generate_random_bytes/1 returns a binary of the exact requested size.
+%% - generate_random_bits/1  returns a list of 0|1 integers of the right length.
+%% - generate_random_int/1   returns a non-negative integer within the expected range.
 random_generation_test() ->
     setup(),
-    %% Create a network with 4 nodes for better entropy distribution
     {ok, NetPid} = alara:create_network(4),
 
-    %% Retrieve the nodes
-    {ok, Nodes} = alara:get_nodes(NetPid),
-    ?assertEqual(4, length(Nodes)),
+    %% --- Bytes ---
+    Bytes = alara:generate_random_bytes(32),
+    ?assert(is_binary(Bytes)),
+    ?assertEqual(32, byte_size(Bytes)),
 
-    %% Generate random booleans distributed across all nodes
-    RandomBools = alara:generate_random_bools(32),
+    %% --- Bits ---
+    Bits = alara:generate_random_bits(64),
+    ?assertEqual(64, length(Bits)),
+    ?assert(lists:all(fun(B) -> B =:= 0 orelse B =:= 1 end, Bits)),
 
-    %% Verify we got the correct number of random booleans
-    ?assertEqual(32, length(RandomBools)),
+    %% --- Integer (16 bits) ---
+    Int16 = alara:generate_random_int(16),
+    ?assert(is_integer(Int16)),
+    ?assert(Int16 >= 0),
+    ?assert(Int16 < round(math:pow(2, 16))),
 
-    %% Verify all values are valid booleans
-    ?assert(lists:all(fun(B) -> is_boolean(B) end, RandomBools)),
+    %% --- Integer (8 bits) ---
+    Int8 = alara:generate_random_int(8),
+    ?assert(is_integer(Int8)),
+    ?assert(Int8 >= 0),
+    ?assert(Int8 < 256),
 
-    %% Generate a random integer using 16 bits of entropy
-    RandomInt = alara:generate_random_int(16),
-
-    %% Verify the random integer is valid
-    ?assert(is_integer(RandomInt)),
-    ?assert(RandomInt >= 0),
-    ?assert(RandomInt < math:pow(2, 16)), % Should be less than 2^16
-
-    %% Generate another random integer with different bit size
-    RandomInt8 = alara:generate_random_int(8),
-    ?assert(is_integer(RandomInt8)),
-    ?assert(RandomInt8 >= 0),
-    ?assert(RandomInt8 < 256), % Should be less than 2^8
-
-    %% Generate multiple random booleans from a specific node
-    [FirstNode | _] = Nodes,
-    NodeRandoms = alara:generate_random_bools(FirstNode, 10),
-    ?assertEqual(10, length(NodeRandoms)),
-    ?assert(lists:all(fun(B) -> is_boolean(B) end, NodeRandoms)),
-
-    %% Clean up
     cleanup(NetPid).
 
 %% ============================================================================
 %% Test: Edge Cases - Single Node Network
 %% ============================================================================
-%% This test verifies that a single-node network works correctly
+%% Verifies that entropy generation still works when only one worker exists.
 single_node_test() ->
     setup(),
-    %% Create a network with only 1 node
     {ok, NetPid} = alara:create_network(1),
-    {ok, [SingleNode]} = alara:get_nodes(NetPid),
 
-    %% Verify the node is running
+    {ok, [SingleNode]} = alara:get_nodes(NetPid),
     ?assert(is_process_alive(SingleNode)),
 
-    %% Verify we can get random values from it
-    RandomBool = alara:generate_random_bools(SingleNode, 1),
-    ?assertEqual(1, length(RandomBool)),
-    ?assert(is_boolean(hd(RandomBool))),
+    %% Ask the supervisor directly for bytes from the single-node pool.
+    Bytes = alara_node_sup:generate_random_bytes(4),
+    ?assert(is_binary(Bytes)),
+    ?assertEqual(4, byte_size(Bytes)),
 
     cleanup(NetPid).
 
 %% ============================================================================
 %% Test: Edge Cases - Large Network
 %% ============================================================================
-%% This test verifies that larger networks can be created
+%% Verifies that a 10-node network starts cleanly and generates valid output.
 large_network_test() ->
     setup(),
-    %% Create a network with 10 nodes
     {ok, NetPid} = alara:create_network(10),
+
     {ok, Nodes} = alara:get_nodes(NetPid),
-
-    %% Verify we have 10 nodes
     ?assertEqual(10, length(Nodes)),
-
-    %% Verify all nodes are alive
     ?assert(lists:all(fun(Pid) -> is_process_alive(Pid) end, Nodes)),
 
-    %% Generate random values from the large network
-    RandomBools = alara:generate_random_bools(100),
-    ?assertEqual(100, length(RandomBools)),
+    %% 100 bits require ceil(100/8) = 13 bytes from the pool.
+    Bits = alara:generate_random_bits(100),
+    ?assertEqual(100, length(Bits)),
+    ?assert(lists:all(fun(B) -> B =:= 0 orelse B =:= 1 end, Bits)),
 
     cleanup(NetPid).
 
 %% ============================================================================
-%% Test: Network State Persistence
+%% Test: Node List Freshness
 %% ============================================================================
-%% This test verifies that the network state remains consistent
-state_consistency_test() ->
+%% Verifies that get_nodes/1 always reflects the live state of the supervisor
+%% rather than a stale cached copy.
+node_list_freshness_test() ->
     setup(),
-    %% Create a network
     {ok, NetPid} = alara:create_network(5),
 
-    %% Get state multiple times
-    {ok, State1} = alara:get_network_state(NetPid),
-    {ok, State2} = alara:get_network_state(NetPid),
+    {ok, Nodes1} = alara:get_nodes(NetPid),
+    {ok, Nodes2} = alara:get_nodes(NetPid),
 
-    %% Verify states are consistent
-    ?assertEqual(State1#state.nodes, State2#state.nodes),
-    ?assertEqual(State1#state.node_supervisor, State2#state.node_supervisor),
+    %% Both calls must return the same five live workers.
+    ?assertEqual(length(Nodes1), length(Nodes2)),
+    ?assert(lists:all(fun(Pid) -> is_process_alive(Pid) end, Nodes1)),
 
-    %% Verify all nodes in state are still alive
-    Nodes = State1#state.nodes,
-    ?assert(lists:all(fun(Pid) -> is_process_alive(Pid) end, Nodes)),
+    %% The supervisor PID must be alive too.
+    SupPid = whereis(alara_node_sup),
+    ?assert(is_pid(SupPid)),
+    ?assert(is_process_alive(SupPid)),
 
     cleanup(NetPid).
 
 %% ============================================================================
 %% Test: Concurrent Random Generation
 %% ============================================================================
-%% This test verifies that multiple processes can generate random values
-%% concurrently without issues
+%% Verifies that concurrent callers get independent, well-formed results.
 concurrent_generation_test() ->
     setup(),
     {ok, NetPid} = alara:create_network(4),
-    {ok, _Nodes} = alara:get_nodes(NetPid),
 
-    %% Spawn multiple processes that generate random values concurrently
     Parent = self(),
-    NumProcesses = 10,
-    
-    Pids = [spawn(fun() ->
-        Randoms = alara:generate_random_bools(20),
-        Parent ! {result, self(), Randoms}
-    end) || _ <- lists:seq(1, NumProcesses)],
+    NumProcs = 10,
 
-    %% Collect all results
+    _Pids = [spawn(fun() ->
+        Bytes = alara:generate_random_bytes(20),
+        Parent ! {result, self(), Bytes}
+    end) || _ <- lists:seq(1, NumProcs)],
+
     Results = [receive
-        {result, Pid, Randoms} -> Randoms
+        {result, _Pid, Bytes} -> Bytes
     after 5000 ->
         error(timeout)
-    end || Pid <- Pids],
+    end || _ <- lists:seq(1, NumProcs)],
 
-    %% Verify we got all results
-    ?assertEqual(NumProcesses, length(Results)),
-
-    %% Verify each result is valid
-    lists:foreach(fun(Randoms) ->
-        ?assertEqual(20, length(Randoms)),
-        ?assert(lists:all(fun(B) -> is_boolean(B) end, Randoms))
+    ?assertEqual(NumProcs, length(Results)),
+    lists:foreach(fun(Bytes) ->
+        ?assert(is_binary(Bytes)),
+        ?assertEqual(20, byte_size(Bytes))
     end, Results),
 
     cleanup(NetPid).
+
+%% ============================================================================
+%% Test: Direct Worker Access
+%% ============================================================================
+%% Verifies that alara_node:get_random_bytes/2 works correctly in isolation,
+%% independently of the supervisor pool.
+direct_worker_test() ->
+    {ok, WorkerPid} = alara_node:start_link(),
+    ?assert(is_process_alive(WorkerPid)),
+
+    Bytes = alara_node:get_random_bytes(WorkerPid, 16),
+    ?assert(is_binary(Bytes)),
+    ?assertEqual(16, byte_size(Bytes)),
+
+    %% Two consecutive calls must produce distinct results with overwhelming
+    %% probability (collision probability ≈ 2^-128 for 16-byte outputs).
+    Bytes2 = alara_node:get_random_bytes(WorkerPid, 16),
+    ?assertNotEqual(Bytes, Bytes2),
+
+    gen_server:stop(WorkerPid).
