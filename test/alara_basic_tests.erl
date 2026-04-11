@@ -169,3 +169,24 @@ direct_worker_test() ->
     ?assertNotEqual(Bytes, Bytes2),
 
     gen_server:stop(WorkerPid).
+
+%% ============================================================================
+%% Test: Worker crash does not hang generate_random_bytes
+%% ============================================================================
+%% Kills a worker right before a generation call. The call must return
+%% promptly — either with bytes (supervisor restarted the worker in time)
+%% or with {error, ...}. A hang would cause this test to timeout.
+worker_crash_no_hang_test_() ->
+    {timeout, 3, fun() ->
+        setup(2),
+        [Worker | _] = alara:get_nodes(),
+        %% Kill the worker; the spawned lambda inside collect_entropy
+        %% will get a 'DOWN' and return {error, {worker_died, _}}.
+        Ref = monitor(process, Worker),
+        exit(Worker, kill),
+        receive {'DOWN', Ref, process, Worker, _} -> ok end,
+        %% Must complete without hanging.
+        Result = alara:generate_random_bytes(16),
+        ?assert(is_binary(Result) orelse element(1, Result) =:= error),
+        cleanup(ok)
+    end}.

@@ -76,15 +76,18 @@ get_nodes() ->
 %% instead so no entropy is truncated.
 %%
 %% Returns {error, no_nodes} if the supervisor has no live workers.
+%% Returns {error, {worker_died, Reason}} if a worker crashed mid-collection.
 -spec generate_random_bytes(N :: pos_integer()) ->
-    binary() | {error, no_nodes}.
+    binary() | {error, no_nodes | {worker_died, term()}}.
 generate_random_bytes(N) when is_integer(N), N > 0 ->
     case get_nodes() of
         [] ->
             {error, no_nodes};
         Nodes ->
-            Raw = collect_entropy(Nodes, N),
-            mix_entropy(Raw, N)
+            case collect_entropy(Nodes, N) of
+                {ok, Raw}        -> mix_entropy(Raw, N);
+                {error, _} = Err -> Err
+            end
     end.
 
 %% @doc Generate N random bits as a list of 0 | 1 integers.
@@ -147,32 +150,50 @@ worker_spec(Id) ->
     }.
 
 %% Distribute the byte request across all nodes as evenly as possible.
-%% Returns the raw concatenated binary from all workers.
--spec collect_entropy(Nodes :: [pid()], TotalBytes :: pos_integer()) -> binary().
+%%
+%% Each worker is spawned with a monitor so that if a gen_server:call
+%% inside the lambda raises (dead node, timeout, etc.) the lambda crashes,
+%% the monitor fires a 'DOWN' message, and collect_chunks returns an error
+%% instead of blocking forever.
+-spec collect_entropy(Nodes :: [pid()], TotalBytes :: pos_integer()) ->
+    {ok, binary()} | {error, {worker_died, term()}}.
 collect_entropy(Nodes, TotalBytes) ->
     NumNodes     = length(Nodes),
     BytesPerNode = TotalBytes div NumNodes,
     Remainder    = TotalBytes rem NumNodes,
+    Self         = self(),
 
-    %% Ask each node for its share in parallel to reduce latency.
-    Refs = [begin
-                Ref = make_ref(),
-                Self = self(),
-                %% Bytes this specific node should produce.
-                Share = case {I, Remainder} of
-                    {1, R} when R > 0 -> BytesPerNode + R; % first node takes remainder
-                    _                 -> BytesPerNode
-                end,
-                spawn(fun() ->
-                    Chunk = alara_node:get_random_bytes(Node, max(1, Share)),
-                    Self ! {Ref, Chunk}
-                end),
-                Ref
-            end || {I, Node} <- lists:zip(lists:seq(1, NumNodes), Nodes)],
+    %% Spawn one monitored lambda per worker node.
+    Pending = [begin
+                    Ref = make_ref(),
+                    Share = case {I, Remainder} of
+                        {1, R} when R > 0 -> BytesPerNode + R;
+                        _                 -> BytesPerNode
+                    end,
+                    {_, MRef} = spawn_monitor(fun() ->
+                        Chunk = alara_node:get_random_bytes(Node, max(1, Share)),
+                        Self ! {Ref, Chunk}
+                    end),
+                    {Ref, MRef}
+                end || {I, Node} <- lists:zip(lists:seq(1, NumNodes), Nodes)],
 
-    %% Collect results in order.
-    Chunks = [receive {Ref, Chunk} -> Chunk end || Ref <- Refs],
-    iolist_to_binary(Chunks).
+    collect_chunks(Pending, []).
+
+%% Collect lambda results in order.
+%% On a 'DOWN' before the message: cancel remaining monitors and return error.
+-spec collect_chunks([{reference(), reference()}], [binary()]) ->
+    {ok, binary()} | {error, {worker_died, term()}}.
+collect_chunks([], Acc) ->
+    {ok, iolist_to_binary(lists:reverse(Acc))};
+collect_chunks([{Ref, MRef} | Rest], Acc) ->
+    receive
+        {Ref, Chunk} ->
+            demonitor(MRef, [flush]),
+            collect_chunks(Rest, [Chunk | Acc]);
+        {'DOWN', MRef, process, _Pid, Reason} ->
+            [demonitor(M, [flush]) || {_, M} <- Rest],
+            {error, {worker_died, Reason}}
+    end.
 
 %% Hash all worker contributions together.
 %%
