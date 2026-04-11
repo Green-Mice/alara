@@ -56,7 +56,7 @@ start_link(NumNodes) when is_integer(NumNodes), NumNodes > 0 ->
 %% @doc Dynamically add a new entropy worker to the pool.
 -spec add_node() -> supervisor:startchild_ret().
 add_node() ->
-    supervisor:start_child(?SERVER, worker_spec(dynamic)).
+    supervisor:start_child(?SERVER, worker_spec(make_ref())).
 
 %% @doc Return the PIDs of all currently alive worker nodes.
 %%
@@ -95,9 +95,9 @@ generate_random_bits(N) when is_integer(N), N > 0 ->
     case generate_random_bytes(NumBytes) of
         {error, _} = Err -> Err;
         Bytes ->
-            %% Unpack every bit and take exactly N of them.
-            AllBits = unpack_bits(Bytes),
-            lists:sublist(AllBits, N)
+            %% Extract exactly N bits via bitstring comprehension (no intermediate lists).
+            << Bits:N/bitstring, _/bitstring >> = Bytes,
+            [B || <<B:1>> <= Bits]
     end.
 
 %% @doc Generate a non-negative random integer using NBits of entropy.
@@ -201,11 +201,3 @@ digest_size(sha256)   -> 32;
 digest_size(sha3_512) -> 64;
 digest_size(sha512)   -> 64.
 
-%% Unpack a binary into a list of individual bits (MSB first).
--spec unpack_bits(binary()) -> [0 | 1].
-unpack_bits(Bin) ->
-    lists:flatmap(fun byte_to_bits/1, binary_to_list(Bin)).
-
--spec byte_to_bits(0..255) -> [0 | 1].
-byte_to_bits(Byte) ->
-    [(Byte bsr Shift) band 1 || Shift <- lists:seq(7, 0, -1)].

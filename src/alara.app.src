@@ -1,17 +1,18 @@
 {application, alara,
  [
   {description, "ALARA - Distributed Entropy Network System"},
-  {vsn, "0.1.6"},
+  {vsn, "0.1.7"},
   {registered, [alara_node_sup]},
+  {mod, {alara_app, []}},
   {applications, [
     kernel,
     stdlib,
     crypto
   ]},
   {env, [
-    {max_nodes, 1000}
+    {pool_size, 3}
   ]},
-  {modules, [alara, alara_node, alara_node_sup]},
+  {modules, [alara, alara_app, alara_node, alara_node_sup]},
   {licenses, ["Apache-2.0"]},
   {links, [{"GitHub", "https://github.com/Green-Mice/alara"}]}
  ]}.

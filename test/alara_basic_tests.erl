@@ -1,63 +1,42 @@
 -module(alara_basic_tests).
 -include_lib("eunit/include/eunit.hrl").
--include_lib("alara/include/alara.hrl").
 
 %% ============================================================================
 %% Test Fixtures - Setup and Cleanup
 %% ============================================================================
 
-%% Kill any registered supervisor left over from a previous test run.
-setup() ->
-    case whereis(alara_node_sup) of
-        undefined ->
-            ok;
-        Pid when is_pid(Pid) ->
-            catch exit(Pid, kill),
-            timer:sleep(50)
-    end,
-    ok.
+%% Start alara with a given pool size, stopping any previous instance first.
+setup(PoolSize) ->
+    application:stop(alara),
+    application:set_env(alara, pool_size, PoolSize),
+    ok = application:start(alara).
 
-cleanup(NetPid) when is_pid(NetPid) ->
-    case is_process_alive(NetPid) of
-        true ->
-            catch gen_server:stop(NetPid),
-            timer:sleep(50);
-        false ->
-            ok
-    end;
 cleanup(_) ->
-    ok.
+    application:stop(alara).
 
 %% ============================================================================
 %% Test: Basic Network Creation
 %% ============================================================================
-%% Verifies that:
-%% - A network starts with the requested number of worker nodes.
-%% - Every returned PID belongs to a live process.
+%% Verifies that a pool starts with the requested number of worker nodes
+%% and that every returned PID belongs to a live process.
 basic_scenario_test() ->
-    setup(),
-    {ok, NetPid} = alara:create_network(3),
-
-    {ok, Nodes} = alara:get_nodes(NetPid),
+    setup(3),
+    Nodes = alara:get_nodes(),
     ?assertEqual(3, length(Nodes)),
     ?assert(lists:all(fun(Pid) -> is_pid(Pid) andalso is_process_alive(Pid) end, Nodes)),
-
-    cleanup(NetPid).
+    cleanup(ok).
 
 %% ============================================================================
 %% Test: Multiple Nodes Creation
 %% ============================================================================
-%% Verifies that all three workers in a 3-node network are individually alive.
+%% Verifies that all three workers in a 3-node pool are individually alive.
 multiple_nodes_test() ->
-    setup(),
-    {ok, NetPid} = alara:create_network(3),
-
-    {ok, [Node1, Node2, Node3]} = alara:get_nodes(NetPid),
+    setup(3),
+    [Node1, Node2, Node3] = alara:get_nodes(),
     ?assert(is_process_alive(Node1)),
     ?assert(is_process_alive(Node2)),
     ?assert(is_process_alive(Node3)),
-
-    cleanup(NetPid).
+    cleanup(ok).
 
 %% ============================================================================
 %% Test: Random Byte Generation
@@ -67,8 +46,7 @@ multiple_nodes_test() ->
 %% - generate_random_bits/1  returns a list of 0|1 integers of the right length.
 %% - generate_random_int/1   returns a non-negative integer within the expected range.
 random_generation_test() ->
-    setup(),
-    {ok, NetPid} = alara:create_network(4),
+    setup(4),
 
     %% --- Bytes ---
     Bytes = alara:generate_random_bytes(32),
@@ -92,35 +70,30 @@ random_generation_test() ->
     ?assert(Int8 >= 0),
     ?assert(Int8 < 256),
 
-    cleanup(NetPid).
+    cleanup(ok).
 
 %% ============================================================================
-%% Test: Edge Cases - Single Node Network
+%% Test: Edge Cases - Single Node Pool
 %% ============================================================================
 %% Verifies that entropy generation still works when only one worker exists.
 single_node_test() ->
-    setup(),
-    {ok, NetPid} = alara:create_network(1),
-
-    {ok, [SingleNode]} = alara:get_nodes(NetPid),
+    setup(1),
+    [SingleNode] = alara:get_nodes(),
     ?assert(is_process_alive(SingleNode)),
 
-    %% Ask the supervisor directly for bytes from the single-node pool.
-    Bytes = alara_node_sup:generate_random_bytes(4),
+    Bytes = alara:generate_random_bytes(4),
     ?assert(is_binary(Bytes)),
     ?assertEqual(4, byte_size(Bytes)),
 
-    cleanup(NetPid).
+    cleanup(ok).
 
 %% ============================================================================
-%% Test: Edge Cases - Large Network
+%% Test: Edge Cases - Large Pool
 %% ============================================================================
-%% Verifies that a 10-node network starts cleanly and generates valid output.
+%% Verifies that a 10-node pool starts cleanly and generates valid output.
 large_network_test() ->
-    setup(),
-    {ok, NetPid} = alara:create_network(10),
-
-    {ok, Nodes} = alara:get_nodes(NetPid),
+    setup(10),
+    Nodes = alara:get_nodes(),
     ?assertEqual(10, length(Nodes)),
     ?assert(lists:all(fun(Pid) -> is_process_alive(Pid) end, Nodes)),
 
@@ -129,39 +102,32 @@ large_network_test() ->
     ?assertEqual(100, length(Bits)),
     ?assert(lists:all(fun(B) -> B =:= 0 orelse B =:= 1 end, Bits)),
 
-    cleanup(NetPid).
+    cleanup(ok).
 
 %% ============================================================================
 %% Test: Node List Freshness
 %% ============================================================================
-%% Verifies that get_nodes/1 always reflects the live state of the supervisor
-%% rather than a stale cached copy.
+%% Verifies that get_nodes/0 always reflects the live state of the supervisor.
 node_list_freshness_test() ->
-    setup(),
-    {ok, NetPid} = alara:create_network(5),
+    setup(5),
+    Nodes1 = alara:get_nodes(),
+    Nodes2 = alara:get_nodes(),
 
-    {ok, Nodes1} = alara:get_nodes(NetPid),
-    {ok, Nodes2} = alara:get_nodes(NetPid),
-
-    %% Both calls must return the same five live workers.
     ?assertEqual(length(Nodes1), length(Nodes2)),
     ?assert(lists:all(fun(Pid) -> is_process_alive(Pid) end, Nodes1)),
 
-    %% The supervisor PID must be alive too.
     SupPid = whereis(alara_node_sup),
     ?assert(is_pid(SupPid)),
     ?assert(is_process_alive(SupPid)),
 
-    cleanup(NetPid).
+    cleanup(ok).
 
 %% ============================================================================
 %% Test: Concurrent Random Generation
 %% ============================================================================
 %% Verifies that concurrent callers get independent, well-formed results.
 concurrent_generation_test() ->
-    setup(),
-    {ok, NetPid} = alara:create_network(4),
-
+    setup(4),
     Parent = self(),
     NumProcs = 10,
 
@@ -182,13 +148,13 @@ concurrent_generation_test() ->
         ?assertEqual(20, byte_size(Bytes))
     end, Results),
 
-    cleanup(NetPid).
+    cleanup(ok).
 
 %% ============================================================================
 %% Test: Direct Worker Access
 %% ============================================================================
 %% Verifies that alara_node:get_random_bytes/2 works correctly in isolation,
-%% independently of the supervisor pool.
+%% independently of the pool.
 direct_worker_test() ->
     {ok, WorkerPid} = alara_node:start_link(),
     ?assert(is_process_alive(WorkerPid)),
