@@ -44,7 +44,7 @@ unpredictable even if all but one worker is compromised.
 
 ```erlang
 %% rebar.config
-{deps, [{alara, "0.1.6"}]}.
+{deps, [{alara, "0.1.7"}]}.
 ```
 
 ### 2. Build
@@ -64,14 +64,12 @@ rebar3 shell
 ### 4. Basic usage
 
 ```erlang
-%% Start a pool of 5 entropy workers.
-{ok, NetPid} = alara:create_network(5).
-
-%% Or use the default (3 workers).
-{ok, NetPid} = alara:create_network().
+%% alara starts automatically with your application (pool_size defaults to 3).
+%% Configure via sys.config if needed:
+%%   [{alara, [{pool_size, 5}]}]
 
 %% List the live worker PIDs.
-{ok, Nodes} = alara:get_nodes(NetPid),
+Nodes = alara:get_nodes(),
 io:format("Workers: ~p~n", [Nodes]).
 
 %% Generate 32 cryptographically secure random bytes.
@@ -92,18 +90,14 @@ io:format("Int: ~p~n", [Int]).
 
 ## API Reference
 
-### Network management
+### Pool management
 
 | Function | Description |
 |---|---|
-| `alara:create_network/0` | Start a supervised pool with 3 entropy workers |
-| `alara:create_network/1` | Start a supervised pool with `N` entropy workers |
-| `alara:get_nodes/1` | Return the PIDs of all currently live workers |
+| `alara:get_nodes/0` | Return the PIDs of all currently live workers |
+| `alara_node_sup:add_node/0` | Dynamically add a worker to the running pool |
 
 ### Entropy generation
-
-All functions below are also available directly on `alara_node_sup` for a
-lighter call path (no extra `gen_server` hop).
 
 | Function | Returns | Description |
 |---|---|---|
@@ -126,7 +120,7 @@ Bytes = alara_node:get_random_bytes(Pid, 16).
 ## Architecture
 
 ```
-alara  (gen_server — optional façade)
+alara_app  (application callback)
   └── alara_node_sup  (supervisor, one_for_one)
         ├── alara_node  (entropy worker — crypto:strong_rand_bytes)
         ├── alara_node  (entropy worker — crypto:strong_rand_bytes)
@@ -142,9 +136,8 @@ restart). Worker requests are issued in parallel; results are concatenated
 and hashed with SHA3-256. The node list is always fetched live from
 `supervisor:which_children/1` — never from a stale cache.
 
-**`alara`** — thin gen_server façade. Starts the supervisor and re-exports
-the generation functions. Generation calls delegate directly to
-`alara_node_sup`, adding no extra message hop.
+**`alara`** — thin API module. Delegates to `alara_node_sup` with no extra
+message hop.
 
 ---
 
