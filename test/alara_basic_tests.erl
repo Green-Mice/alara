@@ -221,3 +221,92 @@ get_cluster_nodes_test() ->
     %% Remote: empty list (no remote_nodes in test config).
     ?assertEqual([], maps:get(remote, Map)),
     cleanup(ok).
+
+%% ============================================================================
+%% Test: add_node/0 increases the pool size by exactly 1
+%% ============================================================================
+add_node_increases_pool_test() ->
+    setup(2),
+    Before = length(alara:get_nodes()),
+    {ok, _} = alara_node_sup:add_node(),
+    After = length(alara:get_nodes()),
+    ?assertEqual(Before + 1, After),
+    cleanup(ok).
+
+%% ============================================================================
+%% Test: generate_random_bytes returns correct size for every N in 1..64
+%% ============================================================================
+generate_bytes_all_sizes_test() ->
+    setup(3),
+    lists:foreach(fun(N) ->
+        Bytes = alara:generate_random_bytes(N),
+        ?assert(is_binary(Bytes)),
+        ?assertEqual(N, byte_size(Bytes))
+    end, lists:seq(1, 64)),
+    cleanup(ok).
+
+%% ============================================================================
+%% Test: generate_random_int(8) always returns a value in [0, 255]
+%% ============================================================================
+generate_int_range_test() ->
+    setup(2),
+    lists:foreach(fun(_) ->
+        V = alara:generate_random_int(8),
+        ?assert(is_integer(V)),
+        ?assert(V >= 0),
+        ?assert(V =< 255)
+    end, lists:seq(1, 1000)),
+    cleanup(ok).
+
+%% ============================================================================
+%% Test: generate_random_bits always returns exactly N bits, all 0 or 1
+%% ============================================================================
+generate_bits_property_test() ->
+    setup(2),
+    lists:foreach(fun(N) ->
+        Bits = alara:generate_random_bits(N),
+        ?assertEqual(N, length(Bits)),
+        ?assert(lists:all(fun(B) -> B =:= 0 orelse B =:= 1 end, Bits))
+    end, lists:seq(1, 128)),
+    cleanup(ok).
+
+%% ============================================================================
+%% Test: 50 concurrent callers each get a distinct 32-byte result
+%%
+%% Collision probability for distinct honest outputs: ≈ 2^-256 per pair.
+%% ============================================================================
+concurrent_no_duplicates_test() ->
+    setup(4),
+    Parent  = self(),
+    NumProcs = 50,
+    [spawn(fun() ->
+        Bytes = alara:generate_random_bytes(32),
+        Parent ! {result, Bytes}
+    end) || _ <- lists:seq(1, NumProcs)],
+    Results = [receive
+        {result, B} -> B
+    after 5000 ->
+        error(timeout)
+    end || _ <- lists:seq(1, NumProcs)],
+    ?assertEqual(NumProcs, length(Results)),
+    %% All distinct.
+    ?assertEqual(NumProcs, length(lists:usort(Results))),
+    cleanup(ok).
+
+%% ============================================================================
+%% Test: killing all workers is handled gracefully — no hang, no crash
+%%
+%% Kill every worker in a 3-node pool. The supervisor restarts them, but the
+%% call made immediately after killing may see {error, _} or succeed if a
+%% worker restarted in time. Either is acceptable — the call must not hang.
+%% ============================================================================
+all_workers_crash_graceful_test_() ->
+    {timeout, 5, fun() ->
+        setup(3),
+        Refs = [{W, monitor(process, W)} || W <- alara:get_nodes()],
+        [exit(W, kill) || {W, _} <- Refs],
+        [receive {'DOWN', Ref, process, W, _} -> ok end || {W, Ref} <- Refs],
+        Result = alara:generate_random_bytes(16),
+        ?assert(is_binary(Result) orelse element(1, Result) =:= error),
+        cleanup(ok)
+    end}.
