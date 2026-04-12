@@ -62,8 +62,13 @@ init([]) ->
     ?ETS = ets:new(?ETS, [named_table, public, set]),
     RemoteNodes = application:get_env(alara, remote_nodes, []),
     lists:foreach(fun(Node) ->
-        Status = try_connect(Node),
-        ets:insert(?ETS, {Node, Status})
+        case try_connect(Node) of
+            up ->
+                ets:insert(?ETS, {Node, up}),
+                erlang:monitor_node(Node, true);
+            down ->
+                ets:insert(?ETS, {Node, down})
+        end
     end, RemoteNodes),
     schedule_reconnect(),
     {ok, #{configured => RemoteNodes}}.
