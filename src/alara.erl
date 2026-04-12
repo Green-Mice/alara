@@ -24,7 +24,8 @@
 %%   %% Then simply:
 %%   Bytes = alara:generate_random_bytes(32),
 %%   Bits  = alara:generate_random_bits(256),
-%%   Int   = alara:generate_random_int(128).
+%%   Int   = alara:generate_random_int(128),
+%%   Nodes   = alara:get_cluster_nodes(),   % full view: local PIDs + remote statuses
 %%
 %% Security requirements
 %% ---------------------
@@ -41,6 +42,7 @@
 
 -export([
     get_nodes/0,
+    get_cluster_nodes/0,
     generate_random_bytes/1,
     generate_random_bits/1,
     generate_random_int/1
@@ -54,6 +56,18 @@
 -spec get_nodes() -> [pid()].
 get_nodes() ->
     alara_node_sup:get_nodes().
+
+%% @doc Return the full cluster view: local worker PIDs and remote node statuses.
+%%
+%% Useful for monitoring, health checks, and dashboards.
+%% Returns `#{local => [...], remote => []}` when remote_nodes is not configured.
+-spec get_cluster_nodes() ->
+    #{local => [pid()], remote => [{node(), up | down}]}.
+get_cluster_nodes() ->
+    #{
+        local  => alara_node_sup:get_nodes(),
+        remote => alara_cluster_monitor:get_all_nodes()
+    }.
 
 %% @doc Generate N cryptographically secure random bytes.
 %%

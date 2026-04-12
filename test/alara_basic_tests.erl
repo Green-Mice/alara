@@ -203,3 +203,21 @@ supervision_tree_test() ->
     ?assert(is_process_alive(whereis(alara_node_sup))),
     ?assert(is_process_alive(whereis(alara_cluster_monitor))),
     cleanup(ok).
+
+%% ============================================================================
+%% Test: get_cluster_nodes/0 returns correct structure
+%% ============================================================================
+get_cluster_nodes_test() ->
+    setup(3),
+    Map = alara:get_cluster_nodes(),
+    %% Must be a map with both keys.
+    ?assert(is_map(Map)),
+    ?assert(maps:is_key(local, Map)),
+    ?assert(maps:is_key(remote, Map)),
+    %% Local: 3 live PIDs (pool_size = 3).
+    Local = maps:get(local, Map),
+    ?assertEqual(3, length(Local)),
+    ?assert(lists:all(fun is_pid/1, Local)),
+    %% Remote: empty list (no remote_nodes in test config).
+    ?assertEqual([], maps:get(remote, Map)),
+    cleanup(ok).
