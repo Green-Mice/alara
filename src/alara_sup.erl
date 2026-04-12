@@ -4,6 +4,12 @@
 %% Top-level one_for_one supervisor. Starts alara_cluster_monitor first
 %% (so it is available when alara_node_sup workers come online) and stops
 %% it last.
+%%
+%% Configuration (application environment)
+%% ----------------------------------------
+%%   {pool_size,         3}     -- number of local entropy workers (default 3)
+%%   {remote_nodes,      []}    -- list of remote alara node names (default [])
+%%   {remote_timeout_ms, 5000}  -- RPC timeout per remote node in ms (default 5000)
 %% ============================================================================
 
 -module(alara_sup).
