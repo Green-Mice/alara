@@ -82,14 +82,10 @@ get_nodes() ->
 -spec generate_random_bytes(N :: pos_integer()) ->
     binary() | {error, no_nodes | {worker_died, term()}}.
 generate_random_bytes(N) when is_integer(N), N > 0 ->
-    case get_nodes() of
-        [] ->
-            {error, no_nodes};
-        Nodes ->
-            case collect_entropy(Nodes, N) of
-                {ok, Raw}        -> mix_entropy(Raw, N);
-                {error, _} = Err -> Err
-            end
+    LocalWorkers = get_nodes(),
+    case collect_entropy(LocalWorkers, N) of
+        {ok, Raw}        -> mix_entropy(Raw, N);
+        {error, _} = Err -> Err
     end.
 
 %% @doc Generate N random bits as a list of 0 | 1 integers.
@@ -151,44 +147,71 @@ worker_spec(Id) ->
         modules => [alara_node]
     }.
 
-%% Distribute the byte request across all nodes as evenly as possible.
+%% Distribute the byte request across all available sources:
+%% local worker PIDs (always) + reachable remote alara nodes (when configured).
 %%
-%% Each worker is spawned with a monitor so that if a gen_server:call
-%% inside the lambda raises (dead node, timeout, etc.) the lambda crashes,
-%% the monitor fires a 'DOWN' message, and collect_chunks returns an error
-%% instead of blocking forever.
--spec collect_entropy(Nodes :: [pid()], TotalBytes :: pos_integer()) ->
-    {ok, binary()} | {error, {worker_died, term()}}.
-collect_entropy(Nodes, TotalBytes) ->
-    NumNodes     = length(Nodes),
-    BytesPerNode = TotalBytes div NumNodes,
-    Remainder    = TotalBytes rem NumNodes,
-    Self         = self(),
+%% For local PIDs : call alara_node:get_random_bytes directly.
+%% For remote nodes: rpc:call → alara:generate_random_bytes on the remote node.
+%%   {badrpc, _} → lambda sends 'skip', collect_chunks silently drops it.
+%%
+%% Two-level HKDF: each remote node HKDF-mixes its own local pool before
+%% replying; the coordinator then HKDF-mixes all contributions together.
+-spec collect_entropy([pid()], pos_integer()) ->
+    {ok, binary()} | {error, no_nodes | {worker_died, term()}}.
+collect_entropy(LocalWorkers, TotalBytes) ->
+    RemoteNodes = alara_cluster_monitor:get_reachable_nodes(),
+    AllSources  = LocalWorkers ++ RemoteNodes,
+    case AllSources of
+        [] ->
+            {error, no_nodes};
+        _ ->
+            Timeout    = application:get_env(alara, remote_timeout_ms, 5000),
+            NumSources = length(AllSources),
+            BytesPer   = TotalBytes div NumSources,
+            Remainder  = TotalBytes rem NumSources,
+            Self       = self(),
+            Pending = [begin
+                           Ref = make_ref(),
+                           Share = case {I, Remainder} of
+                               {1, R} when R > 0 -> BytesPer + R;
+                               _                 -> BytesPer
+                           end,
+                           {_, MRef} = spawn_monitor(fun() ->
+                               Msg = fetch_chunk(Source, max(1, Share), Timeout),
+                               Self ! {Ref, Msg}
+                           end),
+                           {Ref, MRef}
+                       end || {I, Source} <-
+                               lists:zip(lists:seq(1, NumSources), AllSources)],
+            collect_chunks(Pending, [])
+    end.
 
-    %% Spawn one monitored lambda per worker node.
-    Pending = [begin
-                    Ref = make_ref(),
-                    Share = case {I, Remainder} of
-                        {1, R} when R > 0 -> BytesPerNode + R;
-                        _                 -> BytesPerNode
-                    end,
-                    {_, MRef} = spawn_monitor(fun() ->
-                        Chunk = alara_node:get_random_bytes(Node, max(1, Share)),
-                        Self ! {Ref, Chunk}
-                    end),
-                    {Ref, MRef}
-                end || {I, Node} <- lists:zip(lists:seq(1, NumNodes), Nodes)],
-
-    collect_chunks(Pending, []).
+%% Fetch bytes from a local PID worker or a remote node.
+%% Remote failures return the atom 'skip' (never crash the lambda).
+-spec fetch_chunk(pid() | node(), pos_integer(), pos_integer()) ->
+    binary() | skip.
+fetch_chunk(Source, N, _Timeout) when is_pid(Source) ->
+    alara_node:get_random_bytes(Source, N);
+fetch_chunk(Source, N, Timeout) when is_atom(Source) ->
+    case rpc:call(Source, alara, generate_random_bytes, [N], Timeout) of
+        {badrpc, _} -> skip;
+        Bytes       -> Bytes
+    end.
 
 %% Collect lambda results in order.
-%% On a 'DOWN' before the message: cancel remaining monitors and return error.
+%% skip  : remote node was unreachable — silently drop, continue.
+%% DOWN  : local worker crashed — cancel remaining monitors, return error.
 -spec collect_chunks([{reference(), reference()}], [binary()]) ->
-    {ok, binary()} | {error, {worker_died, term()}}.
+    {ok, binary()} | {error, no_nodes | {worker_died, term()}}.
+collect_chunks([], []) ->
+    {error, no_nodes};
 collect_chunks([], Acc) ->
     {ok, iolist_to_binary(lists:reverse(Acc))};
 collect_chunks([{Ref, MRef} | Rest], Acc) ->
     receive
+        {Ref, skip} ->
+            demonitor(MRef, [flush]),
+            collect_chunks(Rest, Acc);
         {Ref, Chunk} ->
             demonitor(MRef, [flush]),
             collect_chunks(Rest, [Chunk | Acc]);
