@@ -190,3 +190,16 @@ worker_crash_no_hang_test_() ->
         ?assert(is_binary(Result) orelse element(1, Result) =:= error),
         cleanup(ok)
     end}.
+
+%% ============================================================================
+%% Test: Supervision tree includes cluster monitor
+%% ============================================================================
+supervision_tree_test() ->
+    setup(2),
+    ?assert(is_pid(whereis(alara_sup))),
+    ?assert(is_pid(whereis(alara_node_sup))),
+    ?assert(is_pid(whereis(alara_cluster_monitor))),
+    ?assert(is_process_alive(whereis(alara_sup))),
+    ?assert(is_process_alive(whereis(alara_node_sup))),
+    ?assert(is_process_alive(whereis(alara_cluster_monitor))),
+    cleanup(ok).
