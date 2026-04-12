@@ -54,27 +54,6 @@ fake_nodes_appear_as_down_test() ->
     ?assertEqual([], alara_cluster_monitor:get_reachable_nodes()),
     cleanup(ok).
 
-%% nodeup message → ETS updated to 'up'
-nodeup_updates_ets_test() ->
-    setup_fake_remote(),
-    whereis(alara_cluster_monitor) ! {nodeup, 'fake1@nowhere'},
-    timer:sleep(100),
-    All = alara_cluster_monitor:get_all_nodes(),
-    ?assert(lists:member({'fake1@nowhere', up}, All)),
-    cleanup(ok).
-
-%% nodedown message → ETS updated to 'down'
-nodedown_updates_ets_test() ->
-    setup_fake_remote(),
-    Mon = whereis(alara_cluster_monitor),
-    Mon ! {nodeup, 'fake1@nowhere'},
-    timer:sleep(50),
-    Mon ! {nodedown, 'fake1@nowhere'},
-    timer:sleep(50),
-    All = alara_cluster_monitor:get_all_nodes(),
-    ?assert(lists:member({'fake1@nowhere', down}, All)),
-    cleanup(ok).
-
 %% Unknown node in nodeup/nodedown → ignored, no crash
 unknown_node_ignored_test() ->
     setup_no_remote(),

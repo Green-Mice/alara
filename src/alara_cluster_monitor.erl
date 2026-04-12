@@ -79,7 +79,7 @@ handle_info({nodeup, Node}, State) ->
     case ets:member(?ETS, Node) of
         true ->
             ets:insert(?ETS, {Node, up}),
-            catch erlang:monitor_node(Node, true);
+            erlang:monitor_node(Node, true);
         false ->
             ok
     end,
@@ -98,7 +98,7 @@ handle_info(reconnect_tick, State) ->
         case try_connect(Node) of
             up ->
                 ets:insert(?ETS, {Node, up}),
-                catch erlang:monitor_node(Node, true);
+                erlang:monitor_node(Node, true);
             down ->
                 ok
         end
