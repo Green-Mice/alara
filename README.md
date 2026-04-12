@@ -17,9 +17,11 @@ any requested output size.
 
 - **Cryptographically secure** — built exclusively on `crypto:strong_rand_bytes/1` (OTP `crypto` application), never on `rand`
 - **HKDF mixing** — all worker contributions are combined via HKDF-Extract + HKDF-Expand (RFC 5869, SHA3-256); the security guarantee holds for any output size
+- **Multi-machine distribution** — entropy is collected from independent remote alara nodes via RPC; each remote node HKDF-mixes its own pool, then the coordinator mixes all contributions
+- **Graceful degradation** — unreachable remote nodes are skipped transparently; output is always produced as long as at least one source (local or remote) is alive
 - **OTP-supervised pool** — workers restart automatically on failure; the node list is always read live from the supervisor
 - **Crash-resilient collection** — each worker request is monitored; if a worker dies mid-collection the call returns `{error, {worker_died, Reason}}` immediately instead of hanging
-- **Parallel collection** — worker requests are issued concurrently to minimise latency
+- **Parallel collection** — worker requests (local and remote) are issued concurrently to minimise latency
 - **Clean, minimal API** — bytes, bits, or integers; one call each
 
 ---
@@ -88,6 +90,31 @@ Int = alara:generate_random_int(128),
 io:format("Int: ~p~n", [Int]).
 ```
 
+### 5. Distributed usage (optional)
+
+Configure remote alara nodes in your `sys.config`:
+
+```erlang
+[{alara, [
+    {pool_size,        3},
+    {remote_nodes,     ['alara@host1', 'alara@host2']},
+    {remote_timeout_ms, 5000}
+]}].
+```
+
+Each remote node must be running the alara application. Entropy is collected
+from all reachable nodes in parallel and HKDF-mixed on the coordinator.
+Unreachable nodes are skipped automatically — the call never fails as long as
+at least one source is alive.
+
+```erlang
+%% Full cluster view: local PIDs + remote node statuses.
+#{local := LocalPids, remote := RemoteStatuses} = alara:get_cluster_nodes(),
+io:format("Local workers: ~p~n", [LocalPids]),
+io:format("Remote nodes:  ~p~n", [RemoteStatuses]).
+%% => Remote nodes: [{'alara@host1', up}, {'alara@host2', down}]
+```
+
 ---
 
 ## API Reference
@@ -96,7 +123,8 @@ io:format("Int: ~p~n", [Int]).
 
 | Function | Description |
 |---|---|
-| `alara:get_nodes/0` | Return the PIDs of all currently live workers |
+| `alara:get_nodes/0` | Return the PIDs of all currently live local workers |
+| `alara:get_cluster_nodes/0` | Return `#{local => [pid()], remote => [{node(), up\|down}]}` |
 | `alara_node_sup:add_node/0` | Dynamically add a worker to the running pool |
 
 ### Entropy generation
@@ -123,22 +151,30 @@ Bytes = alara_node:get_random_bytes(Pid, 16).
 
 ```
 alara_app  (application callback)
-  └── alara_node_sup  (supervisor, one_for_one)
-        ├── alara_node  (entropy worker — crypto:strong_rand_bytes)
-        ├── alara_node  (entropy worker — crypto:strong_rand_bytes)
-        └── ...
+  └── alara_sup  (one_for_one, root supervisor)
+        ├── alara_cluster_monitor  (gen_server — remote node tracker)
+        └── alara_node_sup         (supervisor, one_for_one)
+              ├── alara_node  (entropy worker — crypto:strong_rand_bytes)
+              ├── alara_node  (entropy worker — crypto:strong_rand_bytes)
+              └── ...
 ```
 
 **`alara_node`** — each worker holds no mutable state. On every request it
 calls `crypto:strong_rand_bytes/1` and returns the result. There is nothing
 to compromise at rest.
 
-**`alara_node_sup`** — supervises the worker pool (`one_for_one`, permanent
-restart). Worker requests are issued in parallel via monitored lambdas; if a
-worker crashes mid-collection the error is returned immediately (no hang).
-Contributions are mixed with HKDF-Extract + HKDF-Expand (RFC 5869, SHA3-256),
-preserving the security guarantee for any output size. The node list is always
-fetched live from `supervisor:which_children/1` — never from a stale cache.
+**`alara_node_sup`** — supervises the local worker pool. When generating
+entropy, it queries `alara_cluster_monitor` for reachable remote nodes and
+dispatches requests to local workers and remote nodes in parallel. Remote
+results arrive via `rpc:call/5`; a `{badrpc, _}` response skips that node
+silently. Contributions are mixed with HKDF-Extract + HKDF-Expand (RFC 5869,
+SHA3-256), preserving the security guarantee for any output size.
+
+**`alara_cluster_monitor`** — gen_server that maintains a live ETS view of
+configured remote nodes (`{node(), up | down}`). Uses `erlang:monitor_node/2`
+for instant `nodedown` notifications and a periodic reconnect timer (10 s) to
+recover nodes that were down at startup. The ETS table is public so
+`collect_entropy` can read it without a message hop.
 
 **`alara`** — thin API module. Delegates to `alara_node_sup` with no extra
 message hop.
