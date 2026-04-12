@@ -14,6 +14,9 @@
 -module(alara_cluster_tests).
 -include_lib("eunit/include/eunit.hrl").
 
+%% Pool size used in tests that configure local alara without a remote peer.
+-define(LOCAL_POOL, 3).
+
 %% ---------------------------------------------------------------------------
 %% Suite entry point — ensures distributed Erlang is available
 %% ---------------------------------------------------------------------------
@@ -44,6 +47,8 @@ ensure_distributed() ->
 
 %% Start a peer BEAM node with alara loaded and started.
 %% Note: peer:start_link/1 inherits the parent node's cookie by default (OTP 25+).
+%% If the erpc setup calls fail after the peer is live, the peer is explicitly
+%% stopped before re-raising to avoid resource leaks.
 start_peer() ->
     EbinDir = code:lib_dir(alara, ebin),
     Name    = list_to_atom("alara_peer_" ++
@@ -52,8 +57,14 @@ start_peer() ->
         name => Name,
         args => ["-pa", EbinDir]
     }),
-    ok = erpc:call(PeerNode, application, set_env, [alara, pool_size, 2]),
-    {ok, _} = erpc:call(PeerNode, application, ensure_all_started, [alara]),
+    try
+        ok = erpc:call(PeerNode, application, set_env, [alara, pool_size, 2]),
+        {ok, _} = erpc:call(PeerNode, application, ensure_all_started, [alara])
+    catch
+        Class:Reason:Stack ->
+            peer:stop(Peer),
+            erlang:raise(Class, Reason, Stack)
+    end,
     {Peer, PeerNode}.
 
 stop_peer(Peer) ->
@@ -131,7 +142,7 @@ remote_contributes_test() ->
 remote_node_down_graceful_test() ->
     _ = application:stop(alara),
     application:set_env(alara, remote_nodes, ['does_not_exist@nowhere']),
-    application:set_env(alara, pool_size, 3),
+    application:set_env(alara, pool_size, ?LOCAL_POOL),
     try
         ok = application:start(alara),
         Bytes = alara:generate_random_bytes(16),
@@ -146,12 +157,12 @@ remote_node_down_graceful_test() ->
 empty_remote_nodes_noop_test() ->
     _ = application:stop(alara),
     application:set_env(alara, remote_nodes, []),
-    application:set_env(alara, pool_size, 3),
+    application:set_env(alara, pool_size, ?LOCAL_POOL),
     try
         ok = application:start(alara),
         Map = alara:get_cluster_nodes(),
         ?assertEqual([], maps:get(remote, Map)),
-        ?assertEqual(3, length(maps:get(local, Map))),
+        ?assertEqual(?LOCAL_POOL, length(maps:get(local, Map))),
         Bytes = alara:generate_random_bytes(32),
         ?assert(is_binary(Bytes)),
         ?assertEqual(32, byte_size(Bytes))
@@ -216,7 +227,7 @@ unconfigured_remote_test() ->
     try
         _ = application:stop(alara),
         application:set_env(alara, remote_nodes, []),
-        application:set_env(alara, pool_size, 3),
+        application:set_env(alara, pool_size, ?LOCAL_POOL),
         ok = application:start(alara),
         Remote = maps:get(remote, alara:get_cluster_nodes()),
         ?assertNot(lists:keymember(PeerNode, 1, Remote))
