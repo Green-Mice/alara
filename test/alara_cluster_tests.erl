@@ -5,6 +5,9 @@
 %% Requires distributed Erlang — the suite starts it automatically via
 %% net_kernel:start/1 if the test node is not already distributed.
 %%
+%% Each test uses try/after to guarantee cleanup (teardown_local/stop_peer)
+%% runs even when an assertion fails mid-test.
+%%
 %% Run with: rebar3 eunit --module=alara_cluster_tests
 %% ============================================================================
 
@@ -36,10 +39,11 @@ ensure_distributed() ->
     end.
 
 %% ---------------------------------------------------------------------------
-%% Peer helpers
+%% Infrastructure helpers
 %% ---------------------------------------------------------------------------
 
 %% Start a peer BEAM node with alara loaded and started.
+%% Note: peer:start_link/1 inherits the parent node's cookie by default (OTP 25+).
 start_peer() ->
     EbinDir = code:lib_dir(alara, ebin),
     Name    = list_to_atom("alara_peer_" ++
@@ -55,17 +59,33 @@ start_peer() ->
 stop_peer(Peer) ->
     peer:stop(Peer).
 
-%% Configure local alara to treat PeerNode as a remote node.
+%% Restart local alara with PeerNode configured as a remote node.
 setup_local_with_remote(PeerNode) ->
-    application:stop(alara),
+    _ = application:stop(alara),
     application:set_env(alara, remote_nodes, [PeerNode]),
     application:set_env(alara, pool_size, 2),
     ok = application:start(alara).
 
+%% Stop local alara and clear all test-specific env keys.
 teardown_local() ->
-    application:stop(alara),
+    _ = application:stop(alara),
     application:unset_env(alara, remote_nodes),
-    application:set_env(alara, pool_size, 3).
+    application:unset_env(alara, pool_size).
+
+%% Poll until Fun() returns true, or fail after Timeout ms.
+%% Used instead of fixed timer:sleep to avoid timing-dependent failures.
+wait_until(Fun, Timeout) ->
+    wait_until(Fun, Timeout, 50).
+
+wait_until(_Fun, Timeout, _Interval) when Timeout =< 0 ->
+    error(wait_until_timeout);
+wait_until(Fun, Timeout, Interval) ->
+    case Fun() of
+        true  -> ok;
+        false ->
+            timer:sleep(Interval),
+            wait_until(Fun, Timeout - Interval, Interval)
+    end.
 
 %% ---------------------------------------------------------------------------
 %% Tests
@@ -85,102 +105,122 @@ cluster_suite() ->
 %% Peer shows as 'up' in get_cluster_nodes/0
 cluster_view_test() ->
     {Peer, PeerNode} = start_peer(),
-    setup_local_with_remote(PeerNode),
-    Remote = maps:get(remote, alara:get_cluster_nodes()),
-    ?assert(lists:member({PeerNode, up}, Remote)),
-    teardown_local(),
-    stop_peer(Peer).
+    try
+        setup_local_with_remote(PeerNode),
+        Remote = maps:get(remote, alara:get_cluster_nodes()),
+        ?assert(lists:member({PeerNode, up}, Remote))
+    after
+        teardown_local(),
+        stop_peer(Peer)
+    end.
 
 %% generate_random_bytes works when a remote peer is configured and up
 remote_contributes_test() ->
     {Peer, PeerNode} = start_peer(),
-    setup_local_with_remote(PeerNode),
-    Bytes = alara:generate_random_bytes(32),
-    ?assert(is_binary(Bytes)),
-    ?assertEqual(32, byte_size(Bytes)),
-    teardown_local(),
-    stop_peer(Peer).
+    try
+        setup_local_with_remote(PeerNode),
+        Bytes = alara:generate_random_bytes(32),
+        ?assert(is_binary(Bytes)),
+        ?assertEqual(32, byte_size(Bytes))
+    after
+        teardown_local(),
+        stop_peer(Peer)
+    end.
 
 %% Configured but unreachable node → local fallback, still returns bytes
 remote_node_down_graceful_test() ->
-    application:stop(alara),
+    _ = application:stop(alara),
     application:set_env(alara, remote_nodes, ['does_not_exist@nowhere']),
     application:set_env(alara, pool_size, 3),
-    ok = application:start(alara),
-    Bytes = alara:generate_random_bytes(16),
-    ?assert(is_binary(Bytes)),
-    ?assertEqual(16, byte_size(Bytes)),
-    teardown_local().
+    try
+        ok = application:start(alara),
+        Bytes = alara:generate_random_bytes(16),
+        ?assert(is_binary(Bytes)),
+        ?assertEqual(16, byte_size(Bytes))
+    after
+        teardown_local()
+    end.
 
 %% No remote_nodes config → get_cluster_nodes returns empty remote list,
 %% generation identical to 0.1.8
 empty_remote_nodes_noop_test() ->
-    application:stop(alara),
+    _ = application:stop(alara),
     application:set_env(alara, remote_nodes, []),
     application:set_env(alara, pool_size, 3),
-    ok = application:start(alara),
-    Map = alara:get_cluster_nodes(),
-    ?assertEqual([], maps:get(remote, Map)),
-    ?assertEqual(3, length(maps:get(local, Map))),
-    Bytes = alara:generate_random_bytes(32),
-    ?assert(is_binary(Bytes)),
-    ?assertEqual(32, byte_size(Bytes)),
-    teardown_local().
+    try
+        ok = application:start(alara),
+        Map = alara:get_cluster_nodes(),
+        ?assertEqual([], maps:get(remote, Map)),
+        ?assertEqual(3, length(maps:get(local, Map))),
+        Bytes = alara:generate_random_bytes(32),
+        ?assert(is_binary(Bytes)),
+        ?assertEqual(32, byte_size(Bytes))
+    after
+        teardown_local()
+    end.
 
-%% peer goes down → monitor marks it 'down', generation still works (local)
+%% peer goes down → monitor marks it 'down', generation still works (local pool)
 remote_node_stops_marks_down_test() ->
     {Peer, PeerNode} = start_peer(),
-    setup_local_with_remote(PeerNode),
-    %% Verify up initially.
-    Remote1 = maps:get(remote, alara:get_cluster_nodes()),
-    ?assert(lists:member({PeerNode, up}, Remote1)),
-    %% Stop the peer → {nodedown, PeerNode} fires to the monitor.
-    stop_peer(Peer),
-    timer:sleep(500),
-    %% Now marked as down.
-    Remote2 = maps:get(remote, alara:get_cluster_nodes()),
-    ?assert(lists:member({PeerNode, down}, Remote2)),
-    %% Generation still works (local pool).
-    Bytes = alara:generate_random_bytes(16),
-    ?assert(is_binary(Bytes)),
-    ?assertEqual(16, byte_size(Bytes)),
-    teardown_local().
+    try
+        setup_local_with_remote(PeerNode),
+        Remote1 = maps:get(remote, alara:get_cluster_nodes()),
+        ?assert(lists:member({PeerNode, up}, Remote1)),
+        stop_peer(Peer),
+        %% Poll until the monitor processes the nodedown (up to 3 s).
+        ok = wait_until(fun() ->
+            lists:member({PeerNode, down},
+                         maps:get(remote, alara:get_cluster_nodes()))
+        end, 3000),
+        Bytes = alara:generate_random_bytes(16),
+        ?assert(is_binary(Bytes)),
+        ?assertEqual(16, byte_size(Bytes))
+    after
+        teardown_local(),
+        catch stop_peer(Peer)   %% tolerant: peer may already be stopped
+    end.
 
-%% 20 concurrent callers with one remote peer — all get valid, distinct results
+%% 20 concurrent callers with one remote peer — all get valid, distinct results.
+%% Distinctness is a near-certain safety check (collision prob ≈ 2^-256 per pair).
 concurrent_distributed_test() ->
     {Peer, PeerNode} = start_peer(),
-    setup_local_with_remote(PeerNode),
-    Parent   = self(),
-    NumProcs = 20,
-    [spawn(fun() ->
-        Bytes = alara:generate_random_bytes(32),
-        Parent ! {result, Bytes}
-    end) || _ <- lists:seq(1, NumProcs)],
-    Results = [receive
-        {result, B} -> B
-    after 10000 ->
-        error(timeout)
-    end || _ <- lists:seq(1, NumProcs)],
-    ?assertEqual(NumProcs, length(Results)),
-    lists:foreach(fun(B) ->
-        ?assert(is_binary(B)),
-        ?assertEqual(32, byte_size(B))
-    end, Results),
-    %% All distinct.
-    ?assertEqual(NumProcs, length(lists:usort(Results))),
-    teardown_local(),
-    stop_peer(Peer).
+    try
+        setup_local_with_remote(PeerNode),
+        Parent   = self(),
+        NumProcs = 20,
+        [spawn(fun() ->
+            Bytes = alara:generate_random_bytes(32),
+            Parent ! {result, Bytes}
+        end) || _ <- lists:seq(1, NumProcs)],
+        Results = [receive
+            {result, B} -> B
+        after 10000 ->
+            error(timeout)
+        end || _ <- lists:seq(1, NumProcs)],
+        ?assertEqual(NumProcs, length(Results)),
+        lists:foreach(fun(B) ->
+            ?assert(is_binary(B)),
+            ?assertEqual(32, byte_size(B))
+        end, Results),
+        ?assertEqual(NumProcs, length(lists:usort(Results)))
+    after
+        teardown_local(),
+        stop_peer(Peer)
+    end.
 
-%% peer connected but not in remote_nodes → not in cluster view, not contacted
+%% Peer connected to distribution but NOT in remote_nodes — must be absent
+%% from the cluster view. We start a real peer (not just an atom) to verify
+%% that alara ignores connected-but-unconfigured nodes, not merely absent ones.
 unconfigured_remote_test() ->
     {Peer, PeerNode} = start_peer(),
-    %% Local alara has no remote_nodes configured.
-    application:stop(alara),
-    application:set_env(alara, remote_nodes, []),
-    application:set_env(alara, pool_size, 3),
-    ok = application:start(alara),
-    Remote = maps:get(remote, alara:get_cluster_nodes()),
-    %% PeerNode must NOT appear — it's not configured.
-    ?assertNot(lists:keymember(PeerNode, 1, Remote)),
-    teardown_local(),
-    stop_peer(Peer).
+    try
+        _ = application:stop(alara),
+        application:set_env(alara, remote_nodes, []),
+        application:set_env(alara, pool_size, 3),
+        ok = application:start(alara),
+        Remote = maps:get(remote, alara:get_cluster_nodes()),
+        ?assertNot(lists:keymember(PeerNode, 1, Remote))
+    after
+        teardown_local(),
+        stop_peer(Peer)
+    end.
