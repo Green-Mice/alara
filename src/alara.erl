@@ -60,7 +60,7 @@ get_nodes() ->
 %% @doc Return the full cluster view: local worker PIDs and remote node statuses.
 %%
 %% Useful for monitoring, health checks, and dashboards.
-%% Returns `#{local => [...], remote => []}` when remote_nodes is not configured.
+%% Returns #{local => [...], remote => []} when remote_nodes is not configured.
 -spec get_cluster_nodes() ->
     #{local => [pid()], remote => [{node(), up | down}]}.
 get_cluster_nodes() ->
