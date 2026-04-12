@@ -3,8 +3,9 @@
 **ALARA** is a lightweight distributed entropy system written in Erlang/OTP.  
 It supervises a pool of worker nodes, each producing cryptographically secure
 random bytes via `crypto:strong_rand_bytes/1`. Contributions from all workers
-are mixed with **SHA3-256** before being returned, so the output remains
-unpredictable even if all but one worker is compromised.
+are mixed with **HKDF (RFC 5869, SHA3-256)** before being returned, so the
+output remains unpredictable even if all but one worker is compromised — for
+any requested output size.
 
 [![Hex.pm](https://img.shields.io/hexpm/v/alara.svg)](https://hex.pm/packages/alara)
 [![Hex Docs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/alara)
@@ -15,8 +16,9 @@ unpredictable even if all but one worker is compromised.
 ## Features
 
 - **Cryptographically secure** — built exclusively on `crypto:strong_rand_bytes/1` (OTP `crypto` application), never on `rand`
-- **Distributed mixing** — entropy from every worker is combined and hashed with SHA3-256 before use
+- **HKDF mixing** — all worker contributions are combined via HKDF-Extract + HKDF-Expand (RFC 5869, SHA3-256); the security guarantee holds for any output size
 - **OTP-supervised pool** — workers restart automatically on failure; the node list is always read live from the supervisor
+- **Crash-resilient collection** — each worker request is monitored; if a worker dies mid-collection the call returns `{error, {worker_died, Reason}}` immediately instead of hanging
 - **Parallel collection** — worker requests are issued concurrently to minimise latency
 - **Clean, minimal API** — bytes, bits, or integers; one call each
 
@@ -44,7 +46,7 @@ unpredictable even if all but one worker is compromised.
 
 ```erlang
 %% rebar.config
-{deps, [{alara, "0.1.7"}]}.
+{deps, [{alara, "0.1.8"}]}.
 ```
 
 ### 2. Build
@@ -101,7 +103,7 @@ io:format("Int: ~p~n", [Int]).
 
 | Function | Returns | Description |
 |---|---|---|
-| `alara:generate_random_bytes/1` | `binary()` | `N` random bytes, SHA3-256 mixed |
+| `alara:generate_random_bytes/1` | `binary() \| {error, ...}` | `N` random bytes, HKDF mixed |
 | `alara:generate_random_bits/1` | `[0\|1]` | `N` random bits |
 | `alara:generate_random_int/1` | `non_neg_integer()` | Random integer in `[0, 2^N - 1]` |
 
@@ -132,9 +134,11 @@ calls `crypto:strong_rand_bytes/1` and returns the result. There is nothing
 to compromise at rest.
 
 **`alara_node_sup`** — supervises the worker pool (`one_for_one`, permanent
-restart). Worker requests are issued in parallel; results are concatenated
-and hashed with SHA3-256. The node list is always fetched live from
-`supervisor:which_children/1` — never from a stale cache.
+restart). Worker requests are issued in parallel via monitored lambdas; if a
+worker crashes mid-collection the error is returned immediately (no hang).
+Contributions are mixed with HKDF-Extract + HKDF-Expand (RFC 5869, SHA3-256),
+preserving the security guarantee for any output size. The node list is always
+fetched live from `supervisor:which_children/1` — never from a stale cache.
 
 **`alara`** — thin API module. Delegates to `alara_node_sup` with no extra
 message hop.
