@@ -23,10 +23,8 @@
 
 cluster_test_() ->
     case ensure_distributed() of
-        ok ->
-            cluster_suite();
-        {error, Reason} ->
-            {skip, lists:flatten(io_lib:format("Distributed Erlang unavailable: ~p", [Reason]))}
+        ok         -> cluster_suite();
+        {error, _} -> []
     end.
 
 ensure_distributed() ->
